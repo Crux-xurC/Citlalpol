@@ -1,0 +1,11 @@
+# Build output
+/_build/
+/deps/
+*.ez
+/citl
+
+# Records and local settings never belong here
+/records/
+
+# Local agent settings
+/.claude/
