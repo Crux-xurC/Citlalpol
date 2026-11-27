@@ -5,7 +5,7 @@ The design: [design.md](design.md); how it came about, in Japanese: [ja/design-m
 [forbidden](https://github.com/Crux-xurC/forbidden)'s, with its own scope.
 
 **Status (2026-11-25).** citld and `citl` are in Elixir (`main.exs`, `lib/citlalpol/`; `bin/citl` hands the terminal to forbidden
-for `citl run`) and do what the rows below promise; `test/run.sh` checks them (46 checks, no network; zoozve has its own). Rows marked *(planned)* are not
+for `citl run`) and do what the rows below promise; `test/run.sh` checks them (59 checks, no network; zoozve has its own). Rows marked *(planned)* are not
 done yet. (A first plain version in python3, with stand-ins, came before; it is not kept.)
 
 ## How to read it (for people and AI reviewing or verifying)
@@ -47,13 +47,16 @@ and Citlalpol only sends the connection there and records it.
 | Values of a query, `Authorization` / `Cookie` / API-key headers and the usual secret-bearing arguments of a command line are blanked before anything is written | The records are read in tezcatl and elsewhere; secrets must not end up in them. |
 | `citl label <run> <label>` (or `--clear`) names what a run is doing now — e.g. the row of Xipe Totec being evaluated — and every attempt of that run from then on carries it (`label`); it works only from outside the wall (the labels are in the runtime directory the wall hides) | A program inside must not be able to put its attempts under another name. |
 | `citl log` shows the records (`--run`, `--label`, `--since`, `--decision`, `--json`); tezcatl's Citlalpol panels read the same files, read only | Looking at the records never changes what the wall lets through. |
+| `citl swallow` gathers the refused attempts (the last run, or `--run` / `--label` / `--since`) into a small table, one row a destination, printed and written to `$XDG_RUNTIME_DIR/citlalpol/swallow/last.tsv` (replaced by the next one; read with `cat`); `citl residual <name>` keeps it in `~/.local/share/citlalpol/swallow/` (replaced without asking) | Deciding the next step of the loop needs where the program wanted to go, not every line of the records. |
+| `citl digest <id \| name:id \| host[:port]> pass \| to <host>:<port> \| refuse` writes one destination, first, into **the project's** `access.json`, never the copy in force (`citl read` applies it); what to do is always written; it refuses inside the wall, when the project's file differs from the copy by more than what digest wrote, and over a destination already declared ([design.md](design.md#from-the-records-to-accessjson-swallow-digest-residual)) | Loosening stays a person's act, and a change a program inside made to the project must not come in with it. |
+| The small tables hold refused attempts only, blanked as the records are, and live where the wall hides them | A program inside must not learn what was refused; a name can still carry data, so a kept table is read before it is shown to anyone |
 | `citl run <name> -- <command>` runs the command inside forbidden with the door to Citlalpol and `<name>`'s `access.json`; `citl use` sets what applies to `forbidden on` in a terminal | Running under the wall should be one command, not a set of steps to remember. |
 
 ## Outside the scope (what happens, and what a person does)
 
 | What | What happens | What a person does |
 |---|---|---|
-| **Making what answers**: stand-ins, recorded replies, the expected answers of a contract ([design.md](design.md#what-moved-out), "What moved out") | Citlalpol starts no program and answers nothing itself; a `pass` with `to` reaches the zoozve gate the person runs at that address, or is refused (recorded) | Run the local server (a database of the same version, a stub, [swallow](https://github.com/Crux-xurC/swallow)), a zoozve gate in front of it, and name the gate in `to` |
+| **Making what answers**: stand-ins, recorded replies, the expected answers of a contract ([design.md](design.md#what-moved-out), "What moved out") | Citlalpol starts no program and answers nothing itself; a `pass` with `to` reaches the zoozve gate the person runs at that address, or is refused (recorded) | Run the local server (a database of the same version, a stub), a zoozve gate in front of it, and name the gate in `to` |
 | **`localhost` inside the wall** | It is the wall's own loopback: it never reaches the host, Citlalpol or the person's local servers, and leaves no record | Point the program at a name (`db.example.com`) and declare that name with `to`; this is on purpose — what the person runs locally is named, not reached by accident |
 | **A door without the catch-all** (`citl setup --no-catch-all`, or no nftables) | Programs that ignore the proxy fail at once inside the wall (no route, no resolver) and leave **no record in Citlalpol** | Use the catch-all (`citl setup`), or configure the program to use the proxy |
 | **A connection refused through the catch-all** | The program is not told why (it used no proxy that could answer): its connection is closed at once; the why is in the record | Read `citl log` |
