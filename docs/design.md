@@ -70,7 +70,7 @@ they never go out unintentionally."
 
 forbidden's relay puts a PROXY v2 header in front of each connection. citld reads it **only on connections from the door's unix socket**
 (`$XDG_RUNTIME_DIR/citlalpol/`, 0700, hidden inside the wall) and **removes it**: the destination sees the same bytes as without
-Citlalpol. Its TLVs give the run id, the pid and command of the process inside the wall, the mode (`normal` / `strict`) and `via`. All
+Citlalpol. Its TLVs give the run id, the pid, command and executable of the process inside the wall, the mode (`normal` / `strict`) and `via`. All
 connections inside the wall come from `127.0.0.1`; with the header the record says which run, which process, where.
 
 ## DNS and fake addresses
@@ -97,6 +97,8 @@ Kept in the application's repository and committed with it: "where does this app
 
 - `do`: `pass` or `refuse`. **An undeclared destination is refused.** `refuse` exists to write a refusal down, with its reason in `why`.
 - `host` is a name (`*.` prefix allowed), or an IPv4 literal when a program connects to one on purpose; `port` is optional.
+  `*.` is safe with `refuse`, however wide, and with `pass` + `to`; with a plain `pass` every name under it is resolved for real — see
+  [scope.md](scope.md), "Outside the scope", the row on `*.` — so `citl digest` writes `*.` only with `refuse`.
 - `to` (with `pass`) sends the connection to **a local address** instead of the real one. It may name only a loopback address — checked
   by `citl read` and again at each connection — and it reaches only a zoozve gate (below).
 - `why` is for people; it is in the records too.
@@ -126,10 +128,12 @@ project, and loosening must stay a person's act. `citl status` says when the pro
 
 - **`pass` without `to`** goes to the real destination (an API the program legitimately uses: it passes, and it is seen). A name that
   resolves to a local address is refused: a committed file could otherwise point at this machine's own services.
-- **`pass` with `to`** goes to the local address. At the head of the connection citld sends a **zoozve/1 challenge**
-  (`ZOOZVE/1 <nonce>`) and relays only if the answer is `ZOOZVE/1 OK <HMAC-SHA256(key, "zoozve/1 <nonce> <port>")>` with this machine's
-  key (`~/.config/citlalpol/zoozve.key`, made by `citl setup`, hidden inside the wall). The port is inside the HMAC, so a server on
-  another port that passes the challenge on to a real gate gets it wrong. Otherwise refused, and the record says why; `to_auth: "zoozve"`
+- **`pass` with `to`** goes to the local address. At the head of the connection citld sends a **zoozve/2 challenge**
+  (`ZOOZVE/2 <nonce>`) and relays only if the answer is `ZOOZVE/2 OK <HMAC-SHA256(key, "zoozve/2 <nonce> <address>:<port>")>` with this
+  machine's key (`~/.config/citlalpol/zoozve.key`, made by `citl setup`, hidden inside the wall); `<address>:<port>` is where citld
+  connected (`127.0.0.1:55432`, `[::1]:55432`), which is the gate's own end. Both are inside the HMAC, so a server on another port, or
+  at another loopback address at the same port, that passes the challenge on to a real gate gets it wrong (zoozve/1, 2026-11-25, had
+  the port only). What a gate proves, and what not: [zoozve's scope](https://github.com/Crux-xurC/zoozve/blob/main/docs/scope.md). Otherwise refused, and the record says why; `to_auth: "zoozve"`
   when it passed. **Behind the gate is whatever the person chose** — the same version of a database, a stub.
 - **Never** tezcatl's pages, the relay, Emacs or Xipe Totec (`4001`, `4100`, `4000`, `4200` on loopback), not even with `to`: they can act
   outside the wall (the relay starts shells). More ports in `~/.config/citlalpol/never.json` (`{"ports": [...]}`).
@@ -145,11 +149,17 @@ talk plain HTTP to the local server.
 ## The records
 
 citld appends one JSON line per attempt to `~/.local/share/citlalpol/records/<YYYY-MM-DD>.jsonl` (append only; one process writes, so
-lines never interleave). A line holds: when; the run and its label; the process inside the wall (pid, command, mode); `door`
+lines never interleave). A line holds: when; the run and its label; the process inside the wall (pid, command, executable, mode); `door`
 (`proxy_v2` / `none`); `via` (`redirect` / `dns`); the protocol (`socks5`, `http`, `connect`, `tcp`, `dns`); the destination as named
 (and the fake `address`); the request line of plain HTTP or the DNS question's type; the decision and the rule; `sent_to` (the address
 actually connected to) or the DNS `answer`; bytes each way; time; and why, when refused. "Removed the header and sent it to X" is
 readable from one line.
+
+**What a record can be trusted for.** What Citlalpol decides or sees itself, and what is set outside the wall, holds: the time, `run`
+and `label`, `mode`, `door`, `via`, the destination as named, the decision and its rule, `sent_to`, the bytes. What comes from inside is
+the program's word: `cmd` is the process's command line, which it can rewrite (`exe`, the file the kernel runs, is harder to fake, but
+an interpreter's for a script); `pid` is the first holder of the socket found; the request line is what the client sent. Read those as
+hints about who tried.
 
 **Secrets are blanked before anything is written**: a query's values (`/ping?token=…` keeps only the names), `Authorization` / `Cookie`
 / API-key headers, and the usual secret-bearing arguments of a command line (`user:password@`, `--password` / `--token` values,
@@ -216,7 +226,8 @@ citl residual <name>                                    # keep the last small ta
 **The small table.** `citl swallow` reads the records in the range, keeps only the refused attempts, and groups them by destination
 (the name or IPv4 address, the port — `-` when it was stopped at the DNS question —, the protocol). One row a destination: an id (`1`,
 `2` …), the destination, the port, the protocol, where it stopped (`dns` / `connect`), how many times, the `access.json` that applied
-(by its name), the command that tried (the most frequent), the last time, and why it was refused. It is printed and written to
+(by its name), the command that tried and its executable (the most frequent; the command is what the process said of itself — "The
+records"), the last time, and why it was refused. It is printed and written to
 `$XDG_RUNTIME_DIR/citlalpol/swallow/last.tsv`, replacing the one before: **temporary** — the next `citl swallow`, a logout or a reboot
 takes it away. Tab-separated: a first line `# citl swallow run=<id> <time> …`, a line of column names, the rows. Read it with
 `cat`; there is no command to show it again. UDP and ICMP are not in it while they are not in the records (planned, M6).
@@ -273,7 +284,7 @@ where the tool tried to go.
 
 A `to` at a local server without a gate, or a gate with another key, is refused too.
 
-`test/run.sh` checks these and the rest of scope.md (59 checks) without reaching the network; `examples/demo/access.json` is the same
+`test/run.sh` checks these and the rest of scope.md (62 checks) without reaching the network; `examples/demo/access.json` is the same
 with zoozve's pong, to try by hand.
 
 ## Implementation

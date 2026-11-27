@@ -56,19 +56,40 @@ nobody="$(free_port)"
 mk empty <<'J'
 { "destinations": [] }
 J
+# a server at another loopback address, at the gate's own port, that passes everything on to the real gate
+python3 - "$gate_port" >/dev/null 2>&1 <<'PY' &
+import socket, sys, threading
+p = int(sys.argv[1])
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.2", p)); s.listen()
+def pump(a, b):
+    try:
+        while (d := a.recv(65536)): b.sendall(d)
+    except OSError: pass
+    finally:
+        try: b.shutdown(socket.SHUT_WR)
+        except OSError: pass
+def one(c):
+    u = socket.create_connection(("127.0.0.1", p)); threading.Thread(target=pump, args=(u, c), daemon=True).start(); pump(c, u)
+while True:
+    c, _ = s.accept(); threading.Thread(target=one, args=(c,), daemon=True).start()
+PY
+gate_pids="$gate_pids $!"
+sleep 0.3
 mk decided <<J
 { "destinations": [
   { "host": "pong.citlalpol.test", "port": 80, "do": "pass", "to": "127.0.0.1:$gate_port" },
   { "host": "tls.citlalpol.test", "port": 443, "do": "pass", "to": "localhost:$gate_port" },
   { "host": "bare.citlalpol.test", "do": "pass", "to": "127.0.0.1:$pong_port" },
   { "host": "other.citlalpol.test", "do": "pass", "to": "127.0.0.1:$other_port" },
-  { "host": "down.citlalpol.test", "do": "pass", "to": "127.0.0.1:$nobody" } ] }
+  { "host": "down.citlalpol.test", "do": "pass", "to": "127.0.0.1:$nobody" },
+  { "host": "passon.citlalpol.test", "do": "pass", "to": "127.0.0.2:$gate_port" } ] }
 J
 
 echo "2. a small Citlalpol through the door"
 out="$("$C" run decided -- curl -sS -m5 http://pong.citlalpol.test/ping 2>/dev/null)"
 r="$(last)"
 check "curl in the wall reaches the local server named by to (pong)" '[ "$out" = pong ]'
+check "the record has the executable too, from the door's header (what the kernel runs)" '[[ "$r" == *"\"exe\": \"/"*curl\"* ]]'
 check "the record has the run, the process (curl), the door's header and the decision" \
   '[[ "$r" == *"\"run\": \"c-"* && "$r" == *"\"cmd\": \"curl "* && "$r" == *"\"door\": \"proxy_v2\""* && "$r" == *"\"decision\": \"pass\""* ]]'
 check "the record says where it was sent (sent_to) and that a zoozve gate answered" '[[ "$r" == *"\"host\": \"pong.citlalpol.test\""* && "$r" == *"\"sent_to\": \"127.0.0.1:$gate_port\""* && "$r" == *"\"to_auth\": \"zoozve\""* ]]'
@@ -76,6 +97,8 @@ out="$("$C" run decided -- curl -sS -m5 -w ' %{http_code}' http://bare.citlalpol
 check "a to at a local server that is not behind a gate: refused (the challenge is not answered)" '[[ "$out" == *"not a zoozve gate"*" 403" ]]'
 out="$("$C" run decided -- curl -sS -m5 -w ' %{http_code}' http://other.citlalpol.test/ping 2>/dev/null)"
 check "a gate with another key: refused" '[[ "$out" == *"another key"*" 403" ]]'
+out="$("$C" run decided -- curl -sS -m5 -w ' %{http_code}' http://passon.citlalpol.test/ping 2>/dev/null)"
+check "a server at another loopback address passing the challenge on to a real gate (same port): refused" '[[ "$out" == *"another key"*" 403" ]]'
 
 echo "3. the ping in four steps"
 check "a. outside the wall, the pong answers at its own address" '[ "$(curl -sS -m3 "http://127.0.0.1:$pong_port/ping")" = pong ]'
@@ -207,6 +230,7 @@ check "residual keeps the table in the state directory" '[ "$(cat "$CITLALPOL_ST
 "$C" digest "swtest:$dns_" pass >/dev/null
 check "a second digest before citl read, from a kept table (<name>:<id>): a destination with no port" \
   'python3 -c "import json,sys; d=json.load(open(sys.argv[1]))[\"destinations\"]; sys.exit(not (d[0]==dict(host=\"dns-only.sw.test\",do=\"pass\") and len(d)==3))" "$work/sw/access.json"'
+check "digest writes *. only with refuse" '! "$C" digest "*.wide.sw.test" pass --name sw 2>/dev/null && ! "$C" digest "*.wide.sw.test" to "127.0.0.1:$gate_port" --name sw 2>/dev/null'
 check "digest over a refusal written on purpose: refused" '! "$C" digest upload.sw.test pass --name sw 2>/dev/null'
 check "digest over a destination declared already: refused" '! "$C" digest "$pid_" pass 2>/dev/null'
 "$C" read "$work/sw/access.json" sw >/dev/null

@@ -15,7 +15,8 @@ defmodule Citlalpol.Swallow do
   """
   alias Citlalpol.{Access, Json, Paths, Records}
 
-  @cols ~w(id host port proto stopped count access command last why)
+  # command: what the process said of itself (can be anything); exe: what the kernel ran
+  @cols ~w(id host port proto stopped count access command exe last why)
   @cmd_shown 48
 
   defp die(msg) do
@@ -58,8 +59,8 @@ defmodule Citlalpol.Swallow do
       |> Enum.map(fn {{host, port, proto, access}, rs} ->
         last = List.last(rs)
 
-        cmd =
-          rs |> Enum.map(&(&1["cmd"] || "")) |> Enum.frequencies() |> Enum.max_by(fn {_, n} -> n end) |> elem(0)
+        most = fn k -> rs |> Enum.map(&(&1[k] || "")) |> Enum.frequencies() |> Enum.max_by(fn {_, n} -> n end) |> elem(0) end
+        cmd = most.("cmd")
 
         %{
           "host" => host,
@@ -69,6 +70,7 @@ defmodule Citlalpol.Swallow do
           "count" => "#{length(rs)}",
           "access" => to_string(access || "-"),
           "command" => shorten(cmd),
+          "exe" => shorten(most.("exe")),
           "last" => String.slice(last["at"] || "", 5, 14) |> String.replace("T", " "),
           "why" => to_string(last["why"] || ""),
           "_at" => last["at"] || ""
@@ -154,6 +156,9 @@ defmodule Citlalpol.Swallow do
           :refuse -> [{"do", "refuse"}]
           {:to, to} -> [{"do", "pass"}, {"to", to}]
         end ++ if(o[:why], do: [{"why", o[:why]}], else: [])
+
+    if String.starts_with?(host, "*") and act != :refuse,
+      do: die("digest: *. only with refuse -- with pass every name under it is resolved for real (docs/scope.md); declare each host by its own name")
 
     reg = Access.registered()
 
